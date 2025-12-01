@@ -106,9 +106,9 @@ class RiskAnalyzerAgent(BaseAgent):
                 return {}
             
             returns_df = pd.DataFrame(returns_data).dropna()
-            total_value = sum(asset.current_value for asset in portfolio.assets)
-            weights = np.array([asset.current_value / total_value for asset in portfolio.assets 
-                               if asset.symbol in returns_data])
+            assets_with_returns = [asset for asset in portfolio.assets if asset.symbol in returns_data]
+            total_value = sum(asset.current_value for asset in assets_with_returns)
+            weights = np.array([asset.current_value / total_value for asset in assets_with_returns])
             
             portfolio_returns = (returns_df * weights).sum(axis=1)
             
