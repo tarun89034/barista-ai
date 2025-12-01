@@ -1,3 +1,3 @@
-"""Utilities module for Barista AI."
+"""Utilities module for Barista AI."""
 
 __all__ = []
