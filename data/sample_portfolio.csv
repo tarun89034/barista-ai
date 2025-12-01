@@ -1,0 +1,16 @@
+Symbol,Name,Quantity,Purchase Price,Purchase Date,Asset Type,Sector
+AAPL,Apple Inc.,50,150.00,2023-01-15,Equity,Technology
+MSFT,Microsoft Corporation,30,300.00,2023-02-20,Equity,Technology
+GOOGL,Alphabet Inc.,20,120.00,2023-03-10,Equity,Technology
+AMZN,Amazon.com Inc.,15,140.00,2023-01-25,Equity,Consumer Cyclical
+TSLA,Tesla Inc.,25,200.00,2023-02-15,Equity,Automotive
+NVDA,NVIDIA Corporation,40,250.00,2023-03-05,Equity,Technology
+JPM,JPMorgan Chase & Co.,35,145.00,2023-01-20,Equity,Financial Services
+JNJ,Johnson & Johnson,30,165.00,2023-02-10,Equity,Healthcare
+V,Visa Inc.,25,220.00,2023-03-01,Equity,Financial Services
+BTC-USD,Bitcoin,0.5,45000.00,2023-04-05,Crypto,Cryptocurrency
+ETH-USD,Ethereum,2.0,2500.00,2023-04-10,Crypto,Cryptocurrency
+GLD,SPDR Gold Trust,100,180.00,2023-05-12,Commodity,Gold
+TLT,iShares 20+ Year Treasury Bond,50,95.00,2023-06-18,Debt,Government Bonds
+AGG,iShares Core U.S. Aggregate Bond,75,105.00,2023-06-25,Debt,Investment Grade Bonds
+VNQ,Vanguard Real Estate ETF,40,85.00,2023-07-15,REIT,Real Estate
