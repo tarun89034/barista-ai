@@ -86,17 +86,17 @@ def validate_portfolio_data(df: pd.DataFrame) -> List[str]:
         return errors
     
     for idx, row in df.iterrows():
-        row_prefix = f"Row {idx + 1}"
+        row_prefix = f"Row {int(idx) + 1}"
         
         is_valid, msg = validate_symbol(str(row['symbol']))
         if not is_valid:
             errors.append(f"{row_prefix}: {msg}")
         
-        is_valid, msg = validate_positive_number(row['quantity'], "Quantity")
+        is_valid, msg = validate_positive_number(float(row['quantity']), "Quantity")
         if not is_valid:
             errors.append(f"{row_prefix}: {msg}")
         
-        is_valid, msg = validate_positive_number(row['purchase_price'], "Purchase price")
+        is_valid, msg = validate_positive_number(float(row['purchase_price']), "Purchase price")
         if not is_valid:
             errors.append(f"{row_prefix}: {msg}")
     

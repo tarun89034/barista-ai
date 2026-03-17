@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #fafafa;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #404040; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #525252; }
+
+/* Recharts overrides */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: #262626;
+}
+.recharts-text { fill: #a3a3a3; font-size: 11px; }
+
+@layer components {
+  .card {
+    @apply bg-neutral-900 border border-neutral-800 rounded-xl p-5;
+  }
+  .card-hover {
+    @apply card transition-all duration-200 hover:border-neutral-700 hover:shadow-lg hover:shadow-black/20;
+  }
+  .btn-primary {
+    @apply px-4 py-2 rounded-lg bg-accent text-white font-medium text-sm
+           transition-all duration-200 hover:bg-accent-dark active:scale-[0.97];
+  }
+  .btn-secondary {
+    @apply px-4 py-2 rounded-lg bg-neutral-800 text-neutral-200 font-medium text-sm border border-neutral-700
+           transition-all duration-200 hover:bg-neutral-700 active:scale-[0.97];
+  }
+  .btn-ghost {
+    @apply px-3 py-1.5 rounded-lg text-neutral-400 text-sm
+           transition-colors duration-200 hover:text-white hover:bg-neutral-800;
+  }
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+}

@@ -1,4 +1,4 @@
-"""Memory Agent for storing and retrieving portfolio context using vector database."""
+"""Memory Agent for storing and retrieving portfolio context."""
 
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -12,33 +12,44 @@ logger = logging.getLogger(__name__)
 
 class MemoryAgent(BaseAgent):
     """Agent for managing portfolio memory and historical context."""
-    
-    def __init__(self, collection_name: str = "portfolio_memory", 
+
+    def __init__(self, collection_name: str = "portfolio_memory",
                  use_vector_db: bool = False):
         super().__init__("MemoryAgent")
         self.collection_name = collection_name
         self.use_vector_db = use_vector_db
-        self.memory_store = []
-        
+        self.memory_store: List[Dict[str, Any]] = []
+
         if use_vector_db:
             try:
                 import chromadb
                 self.client = chromadb.Client()
-                self.collection = self.client.create_collection(
-                    name=collection_name,
-                    get_or_create=True
+                self.collection = self.client.get_or_create_collection(
+                    name=collection_name
                 )
                 logger.info(f"Memory Agent initialized with ChromaDB collection: {collection_name}")
             except ImportError:
                 logger.warning("ChromaDB not available, falling back to in-memory storage")
                 self.use_vector_db = False
         else:
-            logger.info(f"Memory Agent initialized with in-memory storage")
-    
-    def execute(self, action: str, data: Dict) -> Dict:
+            logger.info("Memory Agent initialized with in-memory storage")
+
+    def process(self, action: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+        """Execute a memory operation.
+
+        Args:
+            action: One of 'store', 'retrieve', 'search'.
+            data: Data payload for the action.
+
+        Returns:
+            Result dictionary.
+        """
+        if data is None:
+            data = {}
+
         try:
-            self.update_state("running")
-            
+            self.update_state("status", "running")
+
             if action == "store":
                 result = self.store_memory(data)
             elif action == "retrieve":
@@ -47,40 +58,75 @@ class MemoryAgent(BaseAgent):
                 result = self.search_similar(data.get("query", ""), data.get("limit", 5))
             else:
                 raise ValueError(f"Unknown action: {action}")
-            
-            self.update_state("completed")
+
+            self.update_state("status", "completed")
             return result
-            
+
         except Exception as e:
-            self.update_state("failed")
+            self.update_state("status", "failed")
             self.handle_error(e, f"Error executing memory action: {action}")
             raise
-    
-    def store_memory(self, data: Dict) -> Dict:
-        memory_id = f"mem_{len(self.memory_store) + 1}"
+
+    def store_memory(self, data: Dict) -> Dict[str, Any]:
+        """Store a memory entry."""
+        memory_id = f"mem_{len(self.memory_store) + 1}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         memory_entry = {
             "id": memory_id,
             "timestamp": datetime.now().isoformat(),
             "type": data.get("type", "general"),
             "content": data.get("content", ""),
-            "metadata": data.get("metadata", {})
+            "metadata": data.get("metadata", {}),
         }
-        
+
         self.memory_store.append(memory_entry)
+
+        if self.use_vector_db:
+            try:
+                self.collection.add(
+                    documents=[json.dumps(memory_entry)],
+                    ids=[memory_id],
+                    metadatas=[{"type": memory_entry["type"], "timestamp": memory_entry["timestamp"]}],
+                )
+            except Exception as e:
+                logger.warning(f"Failed to store in vector DB: {e}")
+
         logger.info(f"Stored memory entry: {memory_id}")
-        
         return {"success": True, "memory_id": memory_id}
-    
-    def retrieve_memories(self, query: str = "", limit: int = 5) -> Dict:
-        memories = sorted(self.memory_store, key=lambda x: x["timestamp"], reverse=True)[:limit]
+
+    def retrieve_memories(self, query: str = "", limit: int = 5) -> Dict[str, Any]:
+        """Retrieve recent memories, optionally filtered by query."""
+        memories = sorted(self.memory_store, key=lambda x: x["timestamp"], reverse=True)
+
+        if query:
+            query_lower = query.lower()
+            memories = [m for m in memories if query_lower in m.get("content", "").lower()]
+
+        memories = memories[:limit]
         return {"success": True, "count": len(memories), "memories": memories}
-    
-    def search_similar(self, query: str, limit: int = 5) -> Dict:
-        results = []
+
+    def search_similar(self, query: str, limit: int = 5) -> Dict[str, Any]:
+        """Search for similar memories."""
+        if self.use_vector_db:
+            try:
+                results = self.collection.query(query_texts=[query], n_results=limit)
+                return {"success": True, "query": query, "count": len(results.get("documents", [[]])[0]),
+                        "results": results}
+            except Exception as e:
+                logger.warning(f"Vector search failed, falling back to keyword: {e}")
+
+        # Keyword fallback
         query_lower = query.lower()
-        
+        results = []
         for memory in self.memory_store:
             if query_lower in memory.get("content", "").lower():
                 results.append(memory)
-        
+
         return {"success": True, "query": query, "count": len(results[:limit]), "results": results[:limit]}
+
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """Get statistics about stored memories."""
+        return {
+            "total_memories": len(self.memory_store),
+            "use_vector_db": self.use_vector_db,
+            "collection_name": self.collection_name,
+        }

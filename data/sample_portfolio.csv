@@ -1,4 +1,4 @@
-Symbol,Name,Quantity,Purchase Price,Purchase Date,Asset Type,Sector
+symbol,name,quantity,purchase_price,purchase_date,asset_type,sector
 AAPL,Apple Inc.,50,150.00,2023-01-15,Equity,Technology
 MSFT,Microsoft Corporation,30,300.00,2023-02-20,Equity,Technology
 GOOGL,Alphabet Inc.,20,120.00,2023-03-10,Equity,Technology
