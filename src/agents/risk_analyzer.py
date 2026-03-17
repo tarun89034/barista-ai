@@ -78,17 +78,28 @@ class RiskAnalyzerAgent(BaseAgent):
             raise
 
     def _collect_returns_data(self, portfolio: Portfolio, period: str) -> Dict[str, pd.Series]:
-        """Fetch returns once per asset and reuse across calculations."""
+        """Fetch returns for all assets in a single batch download."""
+        symbols = [asset.symbol for asset in portfolio.assets]
         returns_data: Dict[str, pd.Series] = {}
-        for asset in portfolio.assets:
-            try:
-                returns = self.data_fetcher.get_returns(asset.symbol, period=period)
+
+        try:
+            batch = self.data_fetcher.get_multiple_returns(symbols, period=period)
+            for symbol, returns in batch.items():
                 if not returns.empty and len(returns) >= 30:
-                    returns_data[asset.symbol] = returns
+                    returns_data[symbol] = returns
                 else:
-                    logger.warning(f"Insufficient data for {asset.symbol}")
-            except Exception as e:
-                logger.error(f"Error fetching returns for {asset.symbol}: {e}")
+                    logger.warning(f"Insufficient data for {symbol}")
+        except Exception as e:
+            logger.error(f"Batch returns fetch failed, falling back to sequential: {e}")
+            # Fallback to sequential if batch fails
+            for asset in portfolio.assets:
+                try:
+                    returns = self.data_fetcher.get_returns(asset.symbol, period=period)
+                    if not returns.empty and len(returns) >= 30:
+                        returns_data[asset.symbol] = returns
+                except Exception as e2:
+                    logger.error(f"Error fetching returns for {asset.symbol}: {e2}")
+
         return returns_data
 
     def _calculate_asset_metrics(
