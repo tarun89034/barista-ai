@@ -43,12 +43,16 @@ class MarketMonitorAgent(BaseAgent):
             self.update_state("status", "running")
             logger.info(f"Monitoring market for {len(portfolio.assets)} assets")
 
+            # Batch fetch all prices in a single call
+            symbols = [asset.symbol for asset in portfolio.assets]
+            batch_prices = self.data_fetcher.get_multiple_prices(symbols)
+
             current_prices = {}
             new_alerts = []
 
             for asset in portfolio.assets:
                 try:
-                    price = self.data_fetcher.get_current_price(asset.symbol)
+                    price = batch_prices.get(asset.symbol)
                     if price is None:
                         logger.warning(f"Could not fetch price for {asset.symbol}")
                         continue

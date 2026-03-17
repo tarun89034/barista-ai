@@ -2,12 +2,15 @@
 
 Fallback chain for price/returns: Finnhub -> Alpha Vantage -> yfinance
 Additional services: FRED (macro), Currency conversion, Indian market, Global indices.
+
+Performance: batch yf.download() for multiple tickers, ThreadPoolExecutor for FRED.
 """
 
 import time
 import threading
 import logging
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -140,14 +143,16 @@ class FinnhubFetcher:
             return None
         params["token"] = self.api_key
         try:
-            r = requests.get(f"{self.BASE}{endpoint}", params=params, timeout=10)
+            r = requests.get(f"{self.BASE}{endpoint}", params=params, timeout=2)
             if r.status_code == 200:
                 return r.json()
             if r.status_code in (401, 403):
                 self._disabled_until = time.time() + 1800
             logger.warning(f"Finnhub {endpoint} returned {r.status_code}")
         except Exception as e:
-            logger.warning(f"Finnhub request failed: {e}")
+            # Disable for 10min on connection errors (DNS, network, etc.)
+            self._disabled_until = time.time() + 600
+            logger.warning(f"Finnhub unreachable (disabled 10min): {e}")
         return None
 
     def get_current_price(self, symbol: str) -> Optional[float]:
@@ -205,7 +210,7 @@ class AlphaVantageFetcher:
             return None
         params["apikey"] = self.api_key
         try:
-            r = requests.get(self.BASE, params=params, timeout=15)
+            r = requests.get(self.BASE, params=params, timeout=3)
             if r.status_code == 200:
                 data = r.json()
                 # Alpha Vantage returns error messages inside JSON
@@ -216,7 +221,9 @@ class AlphaVantageFetcher:
                     return None
                 return data
         except Exception as e:
-            logger.warning(f"Alpha Vantage request failed: {e}")
+            # Disable for 10min on connection errors
+            self._disabled_until = time.time() + 600
+            logger.warning(f"Alpha Vantage unreachable (disabled 10min): {e}")
         return None
 
     def get_current_price(self, symbol: str) -> Optional[float]:
@@ -322,6 +329,173 @@ class YahooFinanceFetcher:
             logger.warning(f"yfinance historical error for {symbol}: {e}")
         return pd.DataFrame()
 
+    # ── Batch methods (single yf.download call for many tickers) ──────
+
+    def get_batch_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
+        """Fetch current prices for multiple symbols in a single yf.download() call."""
+        result: Dict[str, Optional[float]] = {s: None for s in symbols}
+        if not symbols:
+            return result
+
+        # Check cache first, collect uncached symbols
+        uncached = []
+        for s in symbols:
+            ck = f"yf_price_{s}"
+            cached = self.cache.get(ck)
+            if cached is not None:
+                result[s] = cached
+            else:
+                uncached.append(s)
+
+        if not uncached:
+            return result
+
+        if not self.limiter.try_acquire():
+            return result
+
+        try:
+            logger.info(f"Batch downloading prices for {len(uncached)} tickers")
+            df = yf.download(uncached, period="5d", group_by="ticker",
+                             threads=True, progress=False)
+            if df.empty:
+                return result
+
+            if len(uncached) == 1:
+                # Single ticker: columns are just OHLCV directly
+                sym = uncached[0]
+                if "Close" in df.columns and not df["Close"].dropna().empty:
+                    price = float(df["Close"].dropna().iloc[-1])
+                    result[sym] = price
+                    self.cache.set(f"yf_price_{sym}", price, ttl=120)
+            else:
+                # Multiple tickers: MultiIndex columns (ticker, OHLCV)
+                for sym in uncached:
+                    try:
+                        if sym in df.columns.get_level_values(0):
+                            close_data = df[sym]["Close"].dropna()
+                            if not close_data.empty:
+                                price = float(close_data.iloc[-1])
+                                result[sym] = price
+                                self.cache.set(f"yf_price_{sym}", price, ttl=120)
+                    except Exception as e:
+                        logger.warning(f"Error extracting price for {sym}: {e}")
+        except Exception as e:
+            logger.warning(f"Batch price download failed: {e}")
+            # Fallback: try individually for any that failed
+            for sym in uncached:
+                if result[sym] is None:
+                    result[sym] = self.get_current_price(sym)
+
+        return result
+
+    def get_batch_returns(self, symbols: List[str], period: str = "1y") -> Dict[str, Optional[pd.Series]]:
+        """Fetch daily returns for multiple symbols in a single yf.download() call."""
+        result: Dict[str, Optional[pd.Series]] = {s: None for s in symbols}
+        if not symbols:
+            return result
+
+        # Check cache first
+        uncached = []
+        for s in symbols:
+            ck = f"yf_returns_{s}_{period}"
+            cached = self.cache.get(ck)
+            if isinstance(cached, pd.Series):
+                result[s] = cached
+            else:
+                uncached.append(s)
+
+        if not uncached:
+            return result
+
+        if not self.limiter.try_acquire():
+            return result
+
+        try:
+            logger.info(f"Batch downloading returns for {len(uncached)} tickers (period={period})")
+            df = yf.download(uncached, period=period, group_by="ticker",
+                             threads=True, progress=False)
+            if df.empty:
+                return result
+
+            if len(uncached) == 1:
+                sym = uncached[0]
+                if "Close" in df.columns:
+                    close_series = df["Close"].dropna()
+                    if len(close_series) >= 20:
+                        returns = close_series.pct_change().dropna()
+                        if isinstance(returns, pd.Series) and len(returns) >= 20:
+                            self.cache.set(f"yf_returns_{sym}_{period}", returns, ttl=600)
+                            result[sym] = returns
+            else:
+                for sym in uncached:
+                    try:
+                        if sym in df.columns.get_level_values(0):
+                            close_data = df[sym]["Close"].dropna()
+                            if len(close_data) >= 20:
+                                returns = close_data.pct_change().dropna()
+                                if isinstance(returns, pd.Series) and len(returns) >= 20:
+                                    self.cache.set(f"yf_returns_{sym}_{period}", returns, ttl=600)
+                                    result[sym] = returns
+                    except Exception as e:
+                        logger.warning(f"Error extracting returns for {sym}: {e}")
+        except Exception as e:
+            logger.warning(f"Batch returns download failed: {e}")
+            # Fallback: try individually
+            for sym in uncached:
+                if result[sym] is None:
+                    result[sym] = self.get_returns(sym, period)
+
+        return result
+
+    def get_batch_snapshot(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch price + change data for multiple symbols (used by global indices).
+
+        Returns dict of symbol -> {price, prev_close} for each symbol.
+        """
+        result: Dict[str, Dict[str, Any]] = {}
+        if not symbols:
+            return result
+
+        if not self.limiter.try_acquire():
+            return result
+
+        try:
+            logger.info(f"Batch downloading snapshots for {len(symbols)} tickers")
+            df = yf.download(symbols, period="5d", group_by="ticker",
+                             threads=True, progress=False)
+            if df.empty:
+                return result
+
+            if len(symbols) == 1:
+                sym = symbols[0]
+                if "Close" in df.columns:
+                    closes = df["Close"].dropna()
+                    if len(closes) >= 2:
+                        result[sym] = {
+                            "price": float(closes.iloc[-1]),
+                            "prev_close": float(closes.iloc[-2]),
+                        }
+                    elif len(closes) == 1:
+                        result[sym] = {"price": float(closes.iloc[-1]), "prev_close": None}
+            else:
+                for sym in symbols:
+                    try:
+                        if sym in df.columns.get_level_values(0):
+                            closes = df[sym]["Close"].dropna()
+                            if len(closes) >= 2:
+                                result[sym] = {
+                                    "price": float(closes.iloc[-1]),
+                                    "prev_close": float(closes.iloc[-2]),
+                                }
+                            elif len(closes) == 1:
+                                result[sym] = {"price": float(closes.iloc[-1]), "prev_close": None}
+                    except Exception as e:
+                        logger.warning(f"Error extracting snapshot for {sym}: {e}")
+        except Exception as e:
+            logger.warning(f"Batch snapshot download failed: {e}")
+
+        return result
+
 
 # =============================================================================
 # FRED Fetcher (Macro Economic Indicators)
@@ -381,21 +555,37 @@ class FREDFetcher:
         return None
 
     def get_all_indicators(self) -> Dict[str, Any]:
-        """Fetch all key macro indicators."""
+        """Fetch all key macro indicators in parallel using ThreadPoolExecutor."""
         ck = "fred_all_indicators"
         cached = self.cache.get(ck)
         if cached is not None:
             return cached
         result = {}
-        for name, series_id in self.SERIES.items():
+
+        def _fetch_one(name: str, series_id: str) -> Tuple[str, Optional[Dict]]:
             obs = self.get_indicator(series_id, limit=6)
             if obs:
-                result[name] = {
+                return name, {
                     "series_id": series_id,
                     "latest_value": obs[0]["value"] if obs else None,
                     "latest_date": obs[0]["date"] if obs else None,
                     "recent_observations": obs[:6],
                 }
+            return name, None
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {
+                executor.submit(_fetch_one, name, sid): name
+                for name, sid in self.SERIES.items()
+            }
+            for future in as_completed(futures):
+                try:
+                    name, data = future.result(timeout=15)
+                    if data:
+                        result[name] = data
+                except Exception as e:
+                    logger.warning(f"FRED parallel fetch error: {e}")
+
         if result:
             self.cache.set(ck, result, ttl=3600)
         return result
@@ -500,93 +690,91 @@ INDIAN_TOP_STOCKS = [
 
 
 class GlobalMarketFetcher:
-    """Fetch global market index data via yfinance."""
+    """Fetch global market index data via yfinance (batch download)."""
 
     def __init__(self, cache: SharedCache):
         self.cache = cache
-        self.limiter = RATE_LIMITERS["yfinance"]
+        self.yf = YahooFinanceFetcher(cache)
 
     def get_global_indices(self) -> Dict[str, Any]:
-        """Fetch snapshot of all global indices."""
+        """Fetch snapshot of all global indices in a single batch download."""
         ck = "global_indices_snapshot"
         cached = self.cache.get(ck)
         if cached is not None:
             return cached
+
+        symbols = list(GLOBAL_INDICES.keys())
+        snapshot = self.yf.get_batch_snapshot(symbols)
+
         result = {}
         for symbol, meta in GLOBAL_INDICES.items():
-            if not self.limiter.try_acquire():
-                continue
-            try:
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="5d")
-                if not hist.empty and len(hist) >= 2:
-                    current = float(hist["Close"].iloc[-1])
-                    prev = float(hist["Close"].iloc[-2])
+            if symbol in snapshot:
+                data = snapshot[symbol]
+                current = data["price"]
+                prev = data.get("prev_close")
+                if prev and prev > 0:
                     change = current - prev
-                    change_pct = (change / prev) * 100 if prev else 0
+                    change_pct = (change / prev) * 100
                     result[symbol] = {
                         **meta,
                         "price": round(current, 2),
                         "change": round(change, 2),
                         "change_pct": round(change_pct, 2),
                     }
-                elif not hist.empty:
-                    current = float(hist["Close"].iloc[-1])
+                else:
                     result[symbol] = {**meta, "price": round(current, 2),
                                       "change": 0, "change_pct": 0}
-            except Exception as e:
-                logger.warning(f"Failed to fetch index {symbol}: {e}")
+
         if result:
-            self.cache.set(ck, result, ttl=300)  # 5min cache
+            self.cache.set(ck, result, ttl=300)
         return result
 
     def get_indian_market(self) -> Dict[str, Any]:
-        """Fetch Indian market data: NIFTY 50, SENSEX, top stocks."""
+        """Fetch Indian market data in a single batch download."""
         ck = "indian_market"
         cached = self.cache.get(ck)
         if cached is not None:
             return cached
 
-        # Indices
+        # Batch all Indian tickers (indices + top stocks) in one download
+        index_syms = ["^NSEI", "^BSESN"]
+        stock_syms = INDIAN_TOP_STOCKS[:10]
+        all_syms = index_syms + stock_syms
+
+        snapshot = self.yf.get_batch_snapshot(all_syms)
+
+        # Build indices dict
         indices = {}
-        for sym in ["^NSEI", "^BSESN"]:
-            if not self.limiter.try_acquire():
-                continue
-            try:
-                ticker = yf.Ticker(sym)
-                hist = ticker.history(period="5d")
-                if not hist.empty and len(hist) >= 2:
-                    current = float(hist["Close"].iloc[-1])
-                    prev = float(hist["Close"].iloc[-2])
+        for sym in index_syms:
+            if sym in snapshot:
+                data = snapshot[sym]
+                current = data["price"]
+                prev = data.get("prev_close")
+                if prev and prev > 0:
                     indices[sym] = {
                         "name": GLOBAL_INDICES[sym]["name"],
                         "price": round(current, 2),
                         "change": round(current - prev, 2),
                         "change_pct": round(((current - prev) / prev) * 100, 2),
                     }
-            except Exception as e:
-                logger.warning(f"Failed to fetch Indian index {sym}: {e}")
 
-        # Top stocks
+        # Build top stocks list
         stocks = []
-        for sym in INDIAN_TOP_STOCKS[:10]:  # Limit to 10 to respect rate limits
-            if not self.limiter.try_acquire():
-                continue
-            try:
-                ticker = yf.Ticker(sym)
-                hist = ticker.history(period="5d")
-                if not hist.empty and len(hist) >= 2:
-                    current = float(hist["Close"].iloc[-1])
-                    prev = float(hist["Close"].iloc[-2])
-                    stocks.append({
-                        "symbol": sym,
-                        "name": sym.replace(".NS", ""),
-                        "price": round(current, 2),
-                        "change_pct": round(((current - prev) / prev) * 100, 2),
-                        "currency": "INR",
-                    })
-            except Exception as e:
-                logger.warning(f"Failed to fetch {sym}: {e}")
+        for sym in stock_syms:
+            if sym in snapshot:
+                data = snapshot[sym]
+                current = data["price"]
+                prev = data.get("prev_close")
+                change_pct = 0.0
+                if prev and prev > 0:
+                    change_pct = ((current - prev) / prev) * 100
+                stocks.append({
+                    "symbol": sym,
+                    "name": sym.replace(".NS", ""),
+                    "price": round(current, 2),
+                    "change_pct": round(change_pct, 2),
+                    "currency": "INR",
+                })
 
         result = {"indices": indices, "top_stocks": stocks}
         if indices:
@@ -657,8 +845,71 @@ class MultiSourceDataFetcher(DataFetcher):
         return price
 
     def get_multiple_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
-        """Get current prices for multiple symbols."""
-        return {s: self.get_current_price(s) for s in symbols}
+        """Get current prices for multiple symbols using batch yfinance download.
+
+        Strategy: probe Finnhub with first symbol. If it works, use it for all.
+        If it fails, skip entirely and go straight to batch yfinance.
+        Same for Alpha Vantage (but limited by rate, so only use for a few).
+        """
+        result: Dict[str, Optional[float]] = {s: None for s in symbols}
+        remaining = list(symbols)
+
+        # Probe Finnhub with first symbol; if it fails, skip entirely
+        if self.finnhub and remaining:
+            probe = self.finnhub.get_current_price(remaining[0])
+            if probe is not None:
+                result[remaining[0]] = probe
+                remaining = remaining[1:]
+                # Finnhub works — try the rest
+                still_needed = []
+                for s in remaining:
+                    price = self.finnhub.get_current_price(s)
+                    if price is not None:
+                        result[s] = price
+                    else:
+                        still_needed.append(s)
+                remaining = still_needed
+            # If probe failed, skip Finnhub entirely for this batch
+
+        # Alpha Vantage: only try up to 3 (low rate limit)
+        if self.alpha_vantage and remaining:
+            still_needed = []
+            tried = 0
+            for s in remaining:
+                if tried >= 3:
+                    still_needed.append(s)
+                    continue
+                price = self.alpha_vantage.get_current_price(s)
+                tried += 1
+                if price is not None:
+                    result[s] = price
+                else:
+                    still_needed.append(s)
+            remaining = still_needed
+
+        # Batch the rest via yfinance (single download call)
+        if remaining:
+            batch_prices = self.yfinance.get_batch_prices(remaining)
+            for s, price in batch_prices.items():
+                if price is not None:
+                    result[s] = price
+
+        return result
+
+    def get_multiple_returns(self, symbols: List[str], period: str = "1y") -> Dict[str, pd.Series]:
+        """Get returns for multiple symbols using batch yfinance download.
+
+        Returns only symbols with sufficient data (>= 20 data points).
+        """
+        result: Dict[str, pd.Series] = {}
+
+        # Batch download via yfinance (most reliable for historical data)
+        batch = self.yfinance.get_batch_returns(symbols, period)
+        for s, returns in batch.items():
+            if returns is not None and len(returns) >= 20:
+                result[s] = returns
+
+        return result
 
     # ── Returns (fallback chain) ──────────────────────────────────────
 
