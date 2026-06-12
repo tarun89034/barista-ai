@@ -2,7 +2,7 @@
 
 An intelligent multi-agent AI system for portfolio risk analysis and investment advisory using Google Gemini, real-time financial data from multiple sources, and a modern React dashboard.
 
-**Live Demo**: [Barista AI on HuggingFace Spaces](https://huggingface.co/spaces/ty8890/barista-ai)
+**Live Demo**: [Barista AI on HuggingFace Spaces](https://huggingface.co/spaces/ty8890/barista-ai) · **[▶ Watch Live Demo](https://res.cloudinary.com/dgbobo43l/video/upload/v1776251087/barista_ai_ih1dzm.mp4)**
 
 ## Overview
 
