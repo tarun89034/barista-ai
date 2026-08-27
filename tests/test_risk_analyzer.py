@@ -31,13 +31,29 @@ def mock_data_fetcher():
     # Simulate one asset with no data
     returns_bad = pd.Series(dtype=float)
 
-    fetcher.get_returns.side_effect = lambda symbol, period="1y": {
+    by_symbol = {
         "AAPL": returns_aapl,
         "GOOG": returns_goog,
         "BAD": returns_bad,
-    }.get(symbol, pd.Series(dtype=float))
+    }
+
+    # The agent fetches in one batch and falls back to per-symbol calls,
+    # so both paths are stubbed.
+    fetcher.get_multiple_returns.side_effect = lambda symbols, period="1y": {
+        s: by_symbol[s] for s in symbols if s in by_symbol
+    }
+    fetcher.get_returns.side_effect = lambda symbol, period="1y": by_symbol.get(
+        symbol, pd.Series(dtype=float)
+    )
 
     return fetcher
+
+
+@pytest.fixture
+def returns_data(sample_portfolio, mock_data_fetcher):
+    """Returns data as the agent collects it, with insufficient series dropped."""
+    agent = RiskAnalyzerAgent(data_fetcher=mock_data_fetcher)
+    return agent._collect_returns_data(sample_portfolio, period="1y")
 
 
 @pytest.fixture
@@ -66,11 +82,11 @@ def sample_portfolio():
     return Portfolio(name="Test Portfolio", assets=assets)
 
 
-def test_portfolio_metrics_with_missing_data(sample_portfolio, mock_data_fetcher):
+def test_portfolio_metrics_with_missing_data(sample_portfolio, mock_data_fetcher, returns_data):
     """Test portfolio metrics calculation when some assets have no data."""
     agent = RiskAnalyzerAgent(data_fetcher=mock_data_fetcher)
 
-    metrics = agent._calculate_portfolio_metrics(sample_portfolio, period="1y")
+    metrics = agent._calculate_portfolio_metrics(sample_portfolio, returns_data)
 
     # The total value should only include assets with available return data
     expected_total_value = 1700.0 + 14000.0  # AAPL + GOOG
@@ -87,11 +103,11 @@ def test_portfolio_metrics_with_missing_data(sample_portfolio, mock_data_fetcher
     assert metrics["volatility"] > 0
 
 
-def test_asset_metrics_calculation(sample_portfolio, mock_data_fetcher):
+def test_asset_metrics_calculation(sample_portfolio, mock_data_fetcher, returns_data):
     """Test individual asset metrics calculation."""
     agent = RiskAnalyzerAgent(data_fetcher=mock_data_fetcher)
 
-    asset_metrics = agent._calculate_asset_metrics(sample_portfolio, period="1y")
+    asset_metrics = agent._calculate_asset_metrics(sample_portfolio, returns_data)
 
     # BAD asset should be excluded (empty returns)
     symbols = [m["symbol"] for m in asset_metrics]
