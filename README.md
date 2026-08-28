@@ -212,7 +212,8 @@ GLD,SPDR Gold Trust,100,180.00,2023-05-12,Commodity,Precious Metals
 | `GET` | `/api/v1/currency/convert` | Currency conversion |
 | `WS` | `/api/v1/ws/market/{portfolio_id}` | Live market price stream |
 
-Full API documentation available at `/docs` (Swagger UI) when the server is running.
+Full API documentation is available at `/docs` (Swagger UI) when the server is running.
+
 
 ## Deployment
 
