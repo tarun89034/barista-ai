@@ -7,17 +7,19 @@
 .gitignore
 
 # Python
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-.mypy_cache/
-*.egg-info/
-dist/
-build/
+# NOTE: .dockerignore patterns are NOT recursive the way .gitignore's are --
+# a single * never crosses a "/", so "__pycache__/" would only match the one at
+# the context root and COPY src/ would bake every nested cache into the image.
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.mypy_cache/
+**/*.egg-info/
 .venv/
 venv/
 env/
+.benchmarks/
 
 # Node / Frontend (we build inside Docker)
 frontend/node_modules/

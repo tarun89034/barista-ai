@@ -6,23 +6,52 @@ on:
   pull_request:
 
 jobs:
-  backend:
-    name: Backend (pytest)
+  gitignore-guard:
+    name: Gitignore sanity
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Catches the class of bug where an unanchored pattern (e.g. "lib/",
+      # "models/") shadows a real source directory. Tracked files keep working
+      # locally, so this stays invisible until someone clones fresh or adds a
+      # new file to the shadowed directory.
+      - name: No tracked file may match an ignore rule
+        run: |
+          leaked=$(git ls-files -i -c --exclude-standard)
+          if [ -n "$leaked" ]; then
+            echo "::error::These tracked files match a .gitignore rule:"
+            echo "$leaked"
+            echo "Anchor the offending pattern to the repo root with a leading slash."
+            exit 1
+          fi
+          echo "OK: no tracked file is shadowed by an ignore rule."
+
+  backend:
+    name: Backend (pytest, py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the documented stack; 3.12 is what dev machines run.
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: requirements-dev.txt
 
       - name: Install dependencies
-        # pytest is not in requirements.txt (runtime deps only), so install it here.
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
+          pip install -r requirements-dev.txt
+
+      - name: Import check (no API keys set)
+        # The app must import and build cleanly with a bare environment.
+        run: python -c "from src.api.app import create_app; create_app(); print('app builds OK')"
 
       - name: Run tests
         run: python -m pytest tests/ -q

@@ -94,7 +94,7 @@ All data fetching is optimized with batch downloads and parallel execution:
 ## Quick Start
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.11+ (3.11 and 3.12 are covered by CI; the Docker image uses 3.11)
 - Node.js 18+ (for frontend build)
 - API keys: Google Gemini (required), Finnhub, Alpha Vantage, FRED (optional)
 
@@ -155,6 +155,27 @@ python main.py monitor --file data/sample_portfolio.csv
 python main.py rebalance --file data/sample_portfolio.csv --profile moderate
 ```
 
+### Development
+
+Install the test toolchain (this pulls in `requirements.txt` as well) and run
+the suite:
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -q
+```
+
+The tests are fully mocked -- no API keys or network access required.
+
+CI runs on every push to `main` and on pull requests: pytest on Python 3.11
+and 3.12, `next lint` plus `next build` for the frontend, and a check that no
+tracked file is shadowed by a `.gitignore` rule.
+
+> **Note on `.gitignore`:** patterns for root-level build output must be
+> anchored with a leading slash (`/build/`, `/lib/`, `/models/`). Unanchored,
+> they also match nested source directories such as `frontend/src/lib` and
+> `src/models`, which silently excludes real source from git.
+
 ## Sample Portfolio Format
 
 ```csv
@@ -170,15 +191,26 @@ GLD,SPDR Gold Trust,100,180.00,2023-05-12,Commodity,Precious Metals
 
 | Method | Endpoint | Description |
 |---|---|---|
+| `GET` | `/api/v1/health` | Health check |
+| `GET` | `/api/v1/agents/status` | Agent status |
+| `GET` | `/api/v1/portfolios` | List portfolios |
+| `POST` | `/api/v1/portfolios` | Create a portfolio |
+| `GET` | `/api/v1/portfolios/{id}` | Portfolio summary |
+| `DELETE` | `/api/v1/portfolios/{id}` | Delete a portfolio |
+| `POST` | `/api/v1/portfolios/upload` | Upload a portfolio file |
 | `POST` | `/api/v1/portfolios/load-sample` | Load sample portfolio |
-| `GET` | `/api/v1/analysis/risk` | Run risk analysis |
-| `GET` | `/api/v1/analysis/market` | Market analysis |
-| `GET` | `/api/v1/analysis/rebalancing` | Rebalancing recommendations |
+| `POST` | `/api/v1/analysis/risk` | Run risk analysis |
+| `POST` | `/api/v1/analysis/market` | Market analysis |
+| `POST` | `/api/v1/analysis/rebalancing` | Rebalancing recommendations |
+| `POST` | `/api/v1/analysis/full` | Full multi-agent analysis |
+| `POST` | `/api/v1/analysis/insights` | LLM portfolio insights |
+| `POST` | `/api/v1/analysis/risk-advice` | LLM risk advice |
 | `GET` | `/api/v1/market/global` | Global market indices |
 | `GET` | `/api/v1/market/indian` | Indian market data |
 | `GET` | `/api/v1/market/macro` | FRED macro indicators |
 | `GET` | `/api/v1/currency/rates` | Exchange rates |
-| `POST` | `/api/v1/currency/convert` | Currency conversion |
+| `GET` | `/api/v1/currency/convert` | Currency conversion |
+| `WS` | `/api/v1/ws/market/{portfolio_id}` | Live market price stream |
 
 Full API documentation available at `/docs` (Swagger UI) when the server is running.
 

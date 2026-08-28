@@ -38,6 +38,7 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+/.benchmarks/
 htmlcov/
 .tox/
 .nox/
@@ -63,14 +64,14 @@ db.sqlite3
 db.sqlite3-journal
 
 # Flask stuff:
-instance/
+/instance/
 .webassets-cache
 
 # Scrapy stuff:
 .scrapy
 
 # Sphinx documentation
-docs/_build/
+/docs/_build/
 
 # PyBuilder
 /.pybuilder/
@@ -152,14 +153,14 @@ cython_debug/
 *.sqlite3
 
 # Data files (except sample)
-data/*.csv
-data/*.xlsx
-data/*.json
-!data/sample_portfolio.csv
-!data/README.md
+/data/*.csv
+/data/*.xlsx
+/data/*.json
+!/data/sample_portfolio.csv
+!/data/README.md
 
 # Logs
-logs/
+/logs/
 *.log
 
 # API keys and secrets
@@ -170,8 +171,10 @@ secrets.yaml
 credentials.json
 
 # Model files and checkpoints
-models/
-checkpoints/
+# NOTE: anchored to the repo root. Unanchored, "models/" also matches the
+# src/models Python package and silently drops any new file added there.
+/models/
+/checkpoints/
 *.pkl
 *.pickle
 *.joblib
@@ -181,13 +184,13 @@ checkpoints/
 *.cache
 
 # Temporary files
-tmp/
-temp/
+/tmp/
+/temp/
 *.tmp
 
 # Vector database files
-chroma_db/
-pinecone_cache/
+/chroma_db/
+/pinecone_cache/
 
 # Backup files
 *.bak
